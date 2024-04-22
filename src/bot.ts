@@ -1,60 +1,59 @@
 import TelegramBot from "node-telegram-bot-api";
+import { config } from "dotenv";
+import { PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
-const token = "process.env.TOKEN";
+config();
 
-const bot = new TelegramBot(token, { polling: true });
+const prisma = new PrismaClient();
+const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-bot.onText(/\/echo (.+)/, (msg, match) => {
-    const chatId = msg.chat.id;
-    if(match){
-        const resp = match[1];
-        bot.sendMessage(chatId, resp);
-    }else{
-        bot.sendMessage(chatId, "Ocorreu um erro na comunicação.")
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id.toString();
+    const chatIdParam = msg.chat.id;
+    const userName = `${msg.chat.first_name} ${msg.chat.last_name}`;
+    const messageDate = new Date(msg.date * 1000);
+  
+    const hour = messageDate.getHours();
+    if (hour >= 9 && hour < 18) {
+      const userEmail = await requestUserEmail(chatIdParam);
+      await saveUserInfo(chatId, userName, userEmail);
+    } else {
+        bot.sendMessage(chatId, 'Estamos fora de horário comercial, volte entre 09:00 e 18:00.');
     }
-});
-
-function sendWelcomeMessage(chatId: number) {
-    bot.sendMessage(
-        chatId,
-        'Bem-vindo! Escolha uma opção:\n\n' +
-            '1. Fazer cadastro\n' +
-            '2. Editar cadastro\n' +
-            '3. Deletar cadastro'
-    );
-}
-
-bot.on('message', (msg) => {
-    const chatId = msg.chat.id;
-
-    if (msg.text && msg.text.startsWith('/')) {
-        return;
+  });
+  
+  async function requestUserEmail(chatId: number): Promise<string> {
+    try {
+      await bot.sendMessage(chatId, 'Olá! Por favor, me informe o seu email:');
+      return new Promise<string>((resolve, reject) => {
+        bot.once('message', (msg) => {
+          if (msg.chat.id === chatId) {
+            const userEmail = msg.text;
+            if (!userEmail) {
+              reject(new Error('Email não fornecido'));
+            } else {
+              resolve(userEmail);
+            }
+          }
+        });
+      });
+    } catch (error) {
+      throw new Error('Erro ao solicitar email do usuário: ' + error);
     }
-
-    if (msg.text === '/start') {
-        sendWelcomeMessage(chatId);
-        return;
+  }
+  
+  async function saveUserInfo(chatId: string, userName: string, email: string) {
+    try {
+      await prisma.user.create({
+        data: {
+          chatId: chatId,
+          userName: userName,
+          email: email
+        } as Prisma.UserCreateInput
+      });
+      console.log(`Informações do usuário ${userName} (${email}) salvas com sucesso.`);
+    } catch (error) {
+      console.error('Erro ao salvar informações do usuário:', error);
     }
-
-    switch (msg.text) {
-        case '1':
-            bot.sendMessage(chatId, 'Fazer cadastro.');
-            sendWelcomeMessage(chatId);
-            break;
-        case '2':
-            bot.sendMessage(chatId, 'Editar cadastro.');
-            sendWelcomeMessage(chatId);
-            break;
-        case '3':
-            bot.sendMessage(chatId, 'Deletar cadastro.');
-            sendWelcomeMessage(chatId);
-            break;
-        default:
-            bot.sendMessage(chatId, 'Opção inválida. Por favor, escolha uma opção válida.');
-            sendWelcomeMessage(chatId);
-    }
-});
-
-bot.on('polling_error', (error) => {
-    console.log(error);
-});
+  }
